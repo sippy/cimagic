@@ -56,5 +56,5 @@ jobs:
       run: ls -lR dist
 
     - name: Publish package distributions to PyPI
-      if: github.event_name == 'release' && github.event.action == 'created'
+      if: github.event_name == 'release' && github.event.action == 'published'
       uses: pypa/gh-action-pypi-publish@release/v1
