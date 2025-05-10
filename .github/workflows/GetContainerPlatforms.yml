@@ -1,0 +1,35 @@
+name: Get Image Platforms
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: 'Image name to inspect'
+        required: true
+        type: string
+    outputs:
+      platforms:
+        description: 'Comma-separated list of platforms (e.g. linux/amd64,linux/arm64)'
+        value: ${{ jobs.dm-inspect.outputs.platforms }}
+      build-matrix:
+        description: 'JSON list of platforms for matrix usage'
+        value: ${{ jobs.dm-inspect.outputs.build-matrix }}
+
+jobs:
+  dm-inspect:
+    runs-on: ubuntu-latest
+    outputs:
+      platforms: ${{ steps.get-platforms.outputs.platforms }}
+      build-matrix: ${{ steps.get-platforms.outputs.build-matrix }}
+
+    steps:
+    - name: Get Image Platforms
+      id: get-platforms
+      run: |
+        PLATFORMS="$(docker manifest inspect ${{ inputs.image }} | \
+          jq -r '.manifests[] | "\(.platform.os)/\(.platform.architecture)\(if .platform.variant != null then "/\(.platform.variant)" else "" end)"' | \
+          sort -u | grep -v unknown | paste -sd ',')"
+        BUILD_MATRIX="$(echo ${PLATFORMS} | tr ',' '\n' | jq -R . | jq -s . | tr '\n' ' ')"
+        echo "platforms=${PLATFORMS}" >> $GITHUB_OUTPUT
+        echo "build-matrix=${BUILD_MATRIX}" >> $GITHUB_OUTPUT
+      shell: bash
