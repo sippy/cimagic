@@ -22,6 +22,7 @@ on:
 
 jobs:
   bin:
+    name: ManyLinux
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -66,20 +67,31 @@ jobs:
         GIT_BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}"
         GIT_BRANCH="${GIT_BRANCH#refs/tags/}"
         BUILD_IMAGE="${GHCR_REPO}:${GIT_BRANCH}-${BUILD_SUFX}"
-        if [ "${{ github.event_name }}" != 'pull_request' ]; \
-        then \
-          CACHE_IMAGE="${BUILD_IMAGE}"; \
-          CACHE_SPEC="type=registry,ref=${BUILD_IMAGE}-buildcache"; \
-          if ! docker manifest inspect ${CACHE_IMAGE} >/dev/null 2>/dev/null; \
-          then \
-             CACHE_IMAGE="scratch"; \
-          fi; \
-          DO_PUSH="true"; \
-        else \
-          CACHE_IMAGE="scratch"; \
-          CACHE_SPEC="gha"; \
-          DO_PUSH="false"; \
+        if [ "${{ github.event_name }}" != 'pull_request' ]
+        then
+          CACHE_IMAGE="${BUILD_IMAGE}"
+          CACHE_SPEC="type=registry,ref=${BUILD_IMAGE}-buildcache"
+          if ! docker manifest inspect ${CACHE_IMAGE} >/dev/null 2>/dev/null
+          then
+             CACHE_IMAGE="scratch"
+          fi
+          DO_PUSH="true"
+        else
+          CACHE_IMAGE="scratch"
+          CACHE_SPEC="gha"
+          DO_PUSH="false"
         fi
+        case "${{ matrix.mnl-version }}" in
+        2_28)
+          CCACHE_IMG_TAG="almalinux-8"
+          ;;
+        2_34)
+          CCACHE_IMG_TAG="almalinux-9"
+          ;;
+        *)
+          exit 1
+          ;;
+        esac
         PY_SVER="3${PY_VER#3.}"
         PYTHON_CMD="/opt/python/cp${PY_SVER}-cp${PY_SVER}/bin/python"
         echo "Platforms: ${PLATFORMS}"
@@ -91,6 +103,7 @@ jobs:
         echo "BUILD_IMAGE=${BUILD_IMAGE}" >> $GITHUB_ENV
         echo "CACHE_IMAGE=${CACHE_IMAGE}" >> $GITHUB_ENV
         echo "DO_PUSH=${DO_PUSH}" >> $GITHUB_ENV
+        echo "CCACHE_IMG_TAG=${CCACHE_IMG_TAG}" >> $GITHUB_ENV
 
     - name: Build Binary Wheels
       uses: docker/build-push-action@v6
@@ -102,6 +115,7 @@ jobs:
           PY_VER=${{ env.PY_VER }}
           PYTHON_CMD=${{ env.PYTHON_CMD }}
           CACHE_IMAGE=${{ env.CACHE_IMAGE }}
+          CCACHE_IMAGE=ghcr.io/sobomax/ccache:latest-${{ env.CCACHE_IMG_TAG }}
         platforms: ${{ env.PLATFORMS }}
         tags: ${{ env.BUILD_IMAGE }}
         push: ${{ env.DO_PUSH }}
