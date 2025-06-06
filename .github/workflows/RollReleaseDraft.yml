@@ -14,6 +14,11 @@ on:
         type: string
         required: false
         default: ''
+      submodules_recursive:
+        description: 'Use recursive submodules'
+        type: boolean
+        required: false
+        default: true
 
 jobs:
   draft_and_distfile:
@@ -26,7 +31,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        submodules: 'recursive'
+        submodules: ${{ inputs.submodules_recursive && 'recursive' || 'false' }}
 
     - name: Set Environment
       id: job_config
