@@ -83,7 +83,7 @@ jobs:
         fi
         case "${{ matrix.mnl-version }}" in
         2_28)
-          CCACHE_IMG_TAG="almalinux-8"
+          CCACHE_IMG_TAG="manylinux-2.28"
           ;;
         2_34)
           CCACHE_IMG_TAG="almalinux-9"
