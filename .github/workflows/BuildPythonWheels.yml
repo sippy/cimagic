@@ -86,7 +86,7 @@ jobs:
           CCACHE_IMG_TAG="manylinux-2.28"
           ;;
         2_34)
-          CCACHE_IMG_TAG="almalinux-9"
+          CCACHE_IMG_TAG="manylinux-2.34"
           ;;
         *)
           exit 1
