@@ -19,6 +19,11 @@ on:
         type: string
         required: false
         default: '["3.8","3.9","3.10","3.11","3.12"]'
+      cache_mode:
+        description: 'Container cache mode min/max'
+        type: string
+        required: false
+        default: 'max'
 
 jobs:
   bin:
@@ -121,7 +126,7 @@ jobs:
         push: ${{ env.DO_PUSH }}
         outputs: type=local,dest=dist_out
         cache-from: ${{ env.CACHE_SPEC }}
-        cache-to: ${{ env.CACHE_SPEC }},mode=max
+        cache-to: ${{ env.CACHE_SPEC }},mode=${{ inputs.cache_mode }},compression=zstd
 
     - name: Collect Wheels
       run: |
