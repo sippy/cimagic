@@ -19,13 +19,78 @@ on:
         type: boolean
         required: false
         default: true
+      release_files_script:
+        description: 'Optional script to run for generating extra release files. Its stdout should list the files to include.'
+        type: string
+        required: false
+        default: ''
+      release_files_script_runs_on:
+        description: 'Runner label to use when executing the optional release files script'
+        type: string
+        required: false
+        default: 'ubuntu-latest'
 
 jobs:
+  generate_release_files:
+    name: Generate Release Files
+    if: inputs.release_files_script != ''
+    runs-on: ${{ inputs.release_files_script_runs_on }}
+    outputs:
+      files: ${{ steps.collect_script_files.outputs.files }}
+    steps:
+    - name: Checkout repository
+      if: inputs.release_files_script != ''
+      uses: actions/checkout@v4
+      with:
+        submodules: ${{ inputs.submodules_recursive && 'recursive' || 'false' }}
+
+    - name: Run user provided release script
+      if: inputs.release_files_script != ''
+      env:
+        USER_RELEASE_SCRIPT: ${{ inputs.release_files_script }}
+      run: |
+        set -euo pipefail
+        tmp_list="$(mktemp)"
+        bash -lc "$USER_RELEASE_SCRIPT" | tee "$tmp_list"
+        mkdir -p release-script-output/files
+        : > release_files.txt
+        while IFS= read -r file; do
+          [ -n "$file" ] || continue
+          printf '%s\n' "$file" >> release_files.txt
+          if [ ! -e "$file" ]; then
+            echo "Generated file '$file' does not exist" >&2
+            exit 1
+          fi
+          rsync -R "$file" release-script-output/files/
+        done < "$tmp_list"
+        cp release_files.txt release-script-output/
+
+    - name: Capture script release file list
+      id: collect_script_files
+      run: |
+        if [ -f release_files.txt ]; then
+          {
+            echo 'files<<EOF'
+            cat release_files.txt
+            echo 'EOF'
+          } >> "${GITHUB_OUTPUT}"
+        else
+          echo 'files=' >> "${GITHUB_OUTPUT}"
+        fi
+
+    - name: Upload generated release files
+      if: inputs.release_files_script != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-script-output
+        path: release-script-output
+
   draft_and_distfile:
     name: Create Release Draft and distfile
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && (inputs.release_files_script == '' || needs.generate_release_files.result == 'success')
     permissions:
       contents: write
+    needs: generate_release_files
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
@@ -49,13 +114,48 @@ jobs:
          --transform="s|^[.]|${NAME}|" .
         mv /tmp/${{steps.job_config.outputs.src}} ${{steps.job_config.outputs.src}}
 
+    - name: Initialize release file list
+      run: echo "./${{steps.job_config.outputs.src}}" > release_files.txt
+
+    - name: Download generated release files
+      if: inputs.release_files_script != '' && needs.generate_release_files.outputs.files != ''
+      uses: actions/download-artifact@v4
+      with:
+        name: release-script-output
+        path: release-script-output
+
+    - name: Restore generated release files
+      if: inputs.release_files_script != '' && needs.generate_release_files.outputs.files != ''
+      run: |
+        set -euo pipefail
+        rsync -a release-script-output/files/ ./
+
+    - name: Append generated release file list
+      if: inputs.release_files_script != '' && needs.generate_release_files.outputs.files != ''
+      env:
+        SCRIPT_RELEASE_FILES: ${{ needs.generate_release_files.outputs.files }}
+      run: |
+        set -euo pipefail
+        if [ -n "$SCRIPT_RELEASE_FILES" ]; then
+          echo "${SCRIPT_RELEASE_FILES}" >> release_files.txt
+        fi
+
+    - name: Collect release files
+      id: release_files
+      run: |
+        {
+          echo 'files<<EOF'
+          cat release_files.txt
+          echo 'EOF'
+        } >> "${GITHUB_OUTPUT}"
+
     - name: Create Release
       id: create_release
       uses: softprops/action-gh-release@v2
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        files: ./${{steps.job_config.outputs.src}}
+        files: ${{ steps.release_files.outputs.files }}
         draft: true
         prerelease: false
         generate_release_notes: true
