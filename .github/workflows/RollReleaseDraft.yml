@@ -29,6 +29,11 @@ on:
         type: string
         required: false
         default: 'ubuntu-latest'
+      release_files_artifacts:
+        description: 'Newline-separated list of artifact names from the main CI to attach to the release. The artifacts must already be uploaded in this workflow run.'
+        type: string
+        required: false
+        default: ''
 
 jobs:
   generate_release_files:
@@ -86,8 +91,8 @@ jobs:
         path: release-script-output
 
   draft_and_distfile:
-    name: Create Release Draft and distfile
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && (inputs.release_files_script == '' || needs.generate_release_files.result == 'success')
+    name: Create Release Draft
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && always()
     permissions:
       contents: write
     needs: generate_release_files
@@ -101,6 +106,9 @@ jobs:
     - name: Set Environment
       id: job_config
       run: |
+        if [ "${{ inputs.release_files_script != '' && needs.generate_release_files.result != 'success' }}" == "true" ]; then
+          exit 1
+        fi
         RELEASE_VER="${GITHUB_REF#refs/tags/v}"
         echo "ver=${RELEASE_VER}" >> ${GITHUB_OUTPUT}
         echo "src=${{ inputs.distname }}-${RELEASE_VER}.tar.gz" >> ${GITHUB_OUTPUT}
@@ -116,6 +124,45 @@ jobs:
 
     - name: Initialize release file list
       run: echo "./${{steps.job_config.outputs.src}}" > release_files.txt
+
+    - name: Download CI release artifacts
+      if: inputs.release_files_artifacts != ''
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TARGET_RUN_ID: ${{ github.run_id }}
+        TARGET_REPOSITORY: ${{ github.repository }}
+      run: |
+        echo "${{ inputs.release_files_artifacts }}" > ci_artifacts.txt
+        if [ ! -s ci_artifacts.txt ]; then
+          exit 1
+        fi
+        set -euo pipefail
+        while IFS= read -r artifact_name; do
+          [ -n "$artifact_name" ] || continue
+          dest_dir="release-ci-artifacts/${artifact_name}"
+          mkdir -p "$dest_dir"
+          if ! gh run download "$TARGET_RUN_ID" --repo "$TARGET_REPOSITORY" --name "$artifact_name" --dir "$dest_dir"; then
+            echo "::error::Failed to download artifact '$artifact_name' from run $TARGET_RUN_ID" >&2
+            exit 1
+          fi
+        done < ci_artifacts.txt
+
+    - name: Append CI artifact file list
+      if: inputs.release_files_artifacts != ''
+      run: |
+        set -euo pipefail
+        while IFS= read -r artifact_name; do
+          [ -n "$artifact_name" ] || continue
+          artifact_dir="release-ci-artifacts/$artifact_name"
+          if [ ! -d "$artifact_dir" ]; then
+            echo "Expected artifact directory '$artifact_dir' not found" >&2
+            exit 1
+          fi
+          while IFS= read -r -d '' artifact_file; do
+            rel_path="./${artifact_file#./}"
+            printf '%s\n' "$rel_path" >> release_files.txt
+          done < <(find "$artifact_dir" -type f -print0 | sort -z)
+        done < ci_artifacts.txt
 
     - name: Download generated release files
       if: inputs.release_files_script != '' && needs.generate_release_files.outputs.files != ''
@@ -135,8 +182,7 @@ jobs:
       env:
         SCRIPT_RELEASE_FILES: ${{ needs.generate_release_files.outputs.files }}
       run: |
-        set -euo pipefail
-        if [ -n "$SCRIPT_RELEASE_FILES" ]; then
+        if [ -n "${SCRIPT_RELEASE_FILES}" ]; then
           echo "${SCRIPT_RELEASE_FILES}" >> release_files.txt
         fi
 
@@ -145,7 +191,7 @@ jobs:
       run: |
         {
           echo 'files<<EOF'
-          cat release_files.txt
+          awk '!seen[$0]++' release_files.txt
           echo 'EOF'
         } >> "${GITHUB_OUTPUT}"
 
