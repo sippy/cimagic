@@ -91,8 +91,8 @@ jobs:
         path: release-script-output
 
   draft_and_distfile:
-    name: Create Release Draft
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && always()
+    name: Draft Release
+    if: always()
     permissions:
       contents: write
     needs: generate_release_files
@@ -109,7 +109,11 @@ jobs:
         if [ "${{ inputs.release_files_script != '' && needs.generate_release_files.result != 'success' }}" == "true" ]; then
           exit 1
         fi
-        RELEASE_VER="${GITHUB_REF#refs/tags/v}"
+        if [ "${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}" == "true" ]; then
+          RELEASE_VER="${GITHUB_REF#refs/tags/v}"
+        else
+          RELEASE_VER="0.0.0"
+        fi
         echo "ver=${RELEASE_VER}" >> ${GITHUB_OUTPUT}
         echo "src=${{ inputs.distname }}-${RELEASE_VER}.tar.gz" >> ${GITHUB_OUTPUT}
 
@@ -195,8 +199,9 @@ jobs:
           echo 'EOF'
         } >> "${GITHUB_OUTPUT}"
 
-    - name: Create Release
+    - name: Create Release Draft
       id: create_release
+      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
       uses: softprops/action-gh-release@v2
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
