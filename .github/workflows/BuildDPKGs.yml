@@ -1,0 +1,104 @@
+name: 'DPKGs Builder'
+description: 'Build DPKG packages for few Debian versions and derivatives and upload as artefacts'
+
+on:
+  workflow_call:
+    inputs:
+      apt_depends:
+        description: 'Space-separated list of Extra apt packages to install'
+        type: string
+        required: false
+        default: ''
+      os_versions:
+        description: 'Versions of Debian to build against'
+        type: string
+        required: false
+        default: '["ubuntu:24.04", "ubuntu:22.04", "debian:13", "debian:12", "debian:11"]'
+    outputs:
+      dpkgs_artifacts:
+        description: 'Newline-separated list of Debian package artefact names uploaded by this workflow.'
+        value: ${{ jobs.gen_output.outputs.artifacts }}
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  build_dpkgs:
+    name: Build DPKGs
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJson(inputs.os_versions) }}
+    container: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install build tools
+      run: |
+        apt-get update
+        apt-get install -y bash build-essential devscripts debhelper fakeroot zip
+        if [ ! -z "${{ inputs.apt_depends }}" ]; then
+          apt-get install -y ${{ inputs.apt_depends }}
+        fi
+
+    - name: Build Debian package
+      run: |
+        DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -us -uc -b
+
+    - name: Set Environment
+      run: |
+        OS_PREFIX="`echo "${{ matrix.os }}" | sed 's|:|-|'`"
+        echo "OS_PREFIX=${OS_PREFIX}" >> ${GITHUB_ENV}
+        echo "ARTDIR=${OS_PREFIX}-artifacts" >> ${GITHUB_ENV}
+
+    - name: Collect Debian packages
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "${ARTDIR}"
+        shopt -s nullglob
+        for artifact in ../*.deb ../*.ddeb ../*.buildinfo ../*.changes; do
+          [ -e "${artifact}" ] || continue
+          base=$(basename "${artifact}")
+          mv "${artifact}" "${ARTDIR}/${base}"
+        done
+
+    - name: Test install Debian packages
+      shell: bash
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+        pkgs=(./${ARTDIR}/*.deb)
+        if [ "${#pkgs[@]}" -eq 0 ]; then
+          echo "No Debian packages produced" >&2
+          exit 1
+        fi
+        apt-get install -y "${pkgs[@]}"
+
+    - uses: actions/setup-node@v5
+      with:
+        node-version: 18
+
+    - name: Setup GitHub Actions artifact client
+      uses: lhotari/gh-actions-artifact-client@v2
+
+    - name: Upload Debian artifacts
+      run: |
+        ARTNAME="${OS_PREFIX}_packages"
+        ARTZIP="${ARTNAME}.zip"
+        zip -j -r "${ARTZIP}" "${ARTDIR}"
+        zip - "${ARTZIP}" | gh-actions-artifact-client.js upload "${ARTNAME}" --retentionDays=7
+
+  gen_output:
+    name: Generate Output
+    runs-on: ubuntu-latest
+    outputs:
+      artifacts: ${{ steps.dpkgs_names.outputs.artifacts }}
+    steps:
+    - id: dpkgs_names
+      run: |
+        set -euo pipefail
+        {
+          printf 'artifacts<<EOF\n'
+          echo '${{ inputs.os_versions }}' | jq -r '.[] | sub(":"; "-") + "_packages"'
+          printf 'EOF\n'
+        } >> "${GITHUB_OUTPUT}"
