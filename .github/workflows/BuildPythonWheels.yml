@@ -18,7 +18,12 @@ on:
         description: 'Versions of Python to build against'
         type: string
         required: false
-        default: '["3.8","3.9","3.10","3.11","3.12","3.13"]'
+        default: '["3.9", "3.10", "3.11", "3.12", "3.13"]'
+      mnl_versions:
+        description: 'Versions of ManyLinux to build against'
+        type: string
+        required: false
+        default: '["2_28", "2_34", "2_39"]'
       cache_mode:
         description: 'Container cache mode min/max'
         type: string
@@ -40,7 +45,7 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ${{ fromJson(inputs.py_versions) }}
-        mnl-version: ['2_28', '2_34']
+        mnl-version: ${{ fromJson(inputs.mnl_versions) }}
     steps:
     - uses: actions/checkout@v4
 
@@ -86,17 +91,8 @@ jobs:
           CACHE_SPEC="gha"
           DO_PUSH="false"
         fi
-        case "${{ matrix.mnl-version }}" in
-        2_28)
-          CCACHE_IMG_TAG="manylinux-2.28"
-          ;;
-        2_34)
-          CCACHE_IMG_TAG="manylinux-2.34"
-          ;;
-        *)
-          exit 1
-          ;;
-        esac
+        CCACHE_MNL_TAG="`echo '${{ matrix.mnl-version }}' | sed 's|[.]|_|g'`"
+        CCACHE_IMG_TAG="manylinux-${CCACHE_MNL_TAG}"
         PY_SVER="3${PY_VER#3.}"
         PYTHON_CMD="/opt/python/cp${PY_SVER}-cp${PY_SVER}/bin/python"
         echo "Platforms: ${PLATFORMS}"
