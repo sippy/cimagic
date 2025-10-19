@@ -91,7 +91,7 @@ jobs:
           CACHE_SPEC="gha"
           DO_PUSH="false"
         fi
-        CCACHE_MNL_TAG="`echo '${{ matrix.mnl-version }}' | sed 's|[.]|_|g'`"
+        CCACHE_MNL_TAG="`echo '${{ matrix.mnl-version }}' | sed 's|_|.|g'`"
         CCACHE_IMG_TAG="manylinux-${CCACHE_MNL_TAG}"
         PY_SVER="3${PY_VER#3.}"
         PYTHON_CMD="/opt/python/cp${PY_SVER}-cp${PY_SVER}/bin/python"
