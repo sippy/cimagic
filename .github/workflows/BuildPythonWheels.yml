@@ -114,6 +114,7 @@ jobs:
       env:
         SOURCE_DATE_EPOCH: ${{ env.TIMESTAMP }}
       with:
+        shm-size: 10g
         context: ${{ inputs.context }}
         file: ${{ inputs.dockerfile }}
         build-args: |
