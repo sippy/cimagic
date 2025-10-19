@@ -95,9 +95,11 @@ jobs:
         CCACHE_IMG_TAG="manylinux-${CCACHE_MNL_TAG}"
         PY_SVER="3${PY_VER#3.}"
         PYTHON_CMD="/opt/python/cp${PY_SVER}-cp${PY_SVER}/bin/python"
+        TIMESTAMP="`git log -1 --pretty=%ct`"
         echo "Platforms: ${PLATFORMS}"
         echo "Build Image: ${BUILD_IMAGE}"
         echo "Cache Image: ${CACHE_IMAGE}"
+        echo "Timestamp: ${TIMESTAMP}"
         echo "PLATFORMS=${PLATFORMS}" >> $GITHUB_ENV
         echo "CACHE_SPEC=${CACHE_SPEC}" >> $GITHUB_ENV
         echo "PYTHON_CMD=${PYTHON_CMD}" >> $GITHUB_ENV
@@ -105,9 +107,12 @@ jobs:
         echo "CACHE_IMAGE=${CACHE_IMAGE}" >> $GITHUB_ENV
         echo "DO_PUSH=${DO_PUSH}" >> $GITHUB_ENV
         echo "CCACHE_IMG_TAG=${CCACHE_IMG_TAG}" >> $GITHUB_ENV
+        echo "TIMESTAMP=${TIMESTAMP}" >> $GITHUB_ENV
 
     - name: Build Binary Wheels
       uses: docker/build-push-action@v6
+      env:
+        SOURCE_DATE_EPOCH: ${{ env.TIMESTAMP }}
       with:
         context: ${{ inputs.context }}
         file: ${{ inputs.dockerfile }}
