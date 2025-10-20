@@ -47,6 +47,32 @@ jobs:
         python-version: ${{ fromJson(inputs.py_versions) }}
         mnl-version: ${{ fromJson(inputs.mnl_versions) }}
     steps:
+    - name: Maximize build space
+      shell: sh -x -e {0}
+      run: |
+        echo "Memory and swap:"
+        sudo free -h
+        echo
+        sudo swapon --show
+        echo
+
+        echo "Available storage:"
+        sudo df -h
+        echo
+
+        PIDS=""
+        for d in /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        do
+          sudo rm -rf "${d}" &
+          PIDS="${PIDS} ${!}"
+        done
+        sudo docker image prune --all --force &
+        PIDS="${PIDS} ${!}"
+        for pid in ${PIDS}
+        do
+          wait ${pid}
+        done
+
     - uses: actions/checkout@v4
 
     - name: Set up Python ${{ env.PY_VER }}
@@ -120,7 +146,6 @@ jobs:
       env:
         SOURCE_DATE_EPOCH: ${{ env.TIMESTAMP }}
       with:
-        shm-size: 10g
         context: ${{ inputs.context }}
         file: ${{ inputs.dockerfile }}
         build-args: |
