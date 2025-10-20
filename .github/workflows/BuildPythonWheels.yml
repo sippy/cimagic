@@ -70,10 +70,16 @@ jobs:
 
     - name: Set dynamic environment
       id: set-env
+      shell: bash -o pipefail {0}
       run: |
         PLATFORMS="`docker manifest inspect ${{ env.BASE_IMAGE }} | \
           jq -r '.manifests[] | "\(.platform.os)/\(.platform.architecture)\(if .platform.variant != null then "/\(.platform.variant)" else "" end)"' | \
           sort -u | grep -v unknown | paste -sd ','`"
+        if [ ! -n "${PLATFORMS}" ]
+        then
+          echo "Cannot get list of platforms supported by the ${{ inputs.image }}." >&2
+          exit 1
+        fi
         GIT_BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}"
         GIT_BRANCH="${GIT_BRANCH#refs/tags/}"
         BUILD_IMAGE="${GHCR_REPO}:${GIT_BRANCH}-${BUILD_SUFX}"

@@ -25,10 +25,16 @@ jobs:
     steps:
     - name: Get Image Platforms
       id: get-platforms
+      shell: bash -o pipefail {0}
       run: |
         PLATFORMS="$(docker manifest inspect ${{ inputs.image }} | \
           jq -r '.manifests[] | "\(.platform.os)/\(.platform.architecture)\(if .platform.variant != null then "/\(.platform.variant)" else "" end)"' | \
           sort -u | grep -v unknown | paste -sd ',')"
+        if [ ! -n "${PLATFORMS}" ]
+        then
+          echo "Cannot get list of platforms supported by the ${{ inputs.image }}." >&2
+          exit 1
+        fi
         BUILD_MATRIX="$(echo ${PLATFORMS} | tr ',' '\n' | jq -R . | jq -s . | tr '\n' ' ')"
         echo "platforms=${PLATFORMS}" >> $GITHUB_OUTPUT
         echo "build-matrix=${BUILD_MATRIX}" >> $GITHUB_OUTPUT
