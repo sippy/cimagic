@@ -29,6 +29,9 @@ on:
         type: string
         required: false
         default: 'max'
+      maximize_space:
+        type: boolean
+        default: false
 
 jobs:
   bin:
@@ -48,6 +51,7 @@ jobs:
         mnl-version: ${{ fromJson(inputs.mnl_versions) }}
     steps:
     - name: Maximize build space
+      if: ${{ inputs.maximize_space }}
       shell: sh -x -e {0}
       run: |
         echo "Memory and swap:"
