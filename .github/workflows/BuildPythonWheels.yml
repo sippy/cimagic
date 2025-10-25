@@ -30,7 +30,14 @@ on:
         required: false
         default: 'max'
       maximize_space:
+        description: 'Remove tens of GBs of GH supplied junk before the build'
         type: boolean
+        required: false
+        default: false
+      docker_logs:
+        description: 'Upload Docker build logs and summaries'
+        type: boolean
+        required: false
         default: false
 
 jobs:
@@ -149,6 +156,8 @@ jobs:
       uses: docker/build-push-action@v6
       env:
         SOURCE_DATE_EPOCH: ${{ env.TIMESTAMP }}
+        DOCKER_BUILD_SUMMARY: ${{ inputs.docker_logs }}
+        DOCKER_BUILD_RECORD_UPLOAD: ${{ inputs.docker_logs }}
       with:
         context: ${{ inputs.context }}
         file: ${{ inputs.dockerfile }}
