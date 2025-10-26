@@ -38,4 +38,3 @@ jobs:
         BUILD_MATRIX="$(echo ${PLATFORMS} | tr ',' '\n' | jq -R . | jq -s . | tr '\n' ' ')"
         echo "platforms=${PLATFORMS}" >> $GITHUB_OUTPUT
         echo "build-matrix=${BUILD_MATRIX}" >> $GITHUB_OUTPUT
-      shell: bash
