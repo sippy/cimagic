@@ -122,12 +122,16 @@ jobs:
         BUILD_IMAGE="${GHCR_REPO}:${GIT_BRANCH}-${BUILD_SUFX}"
         if [ "${{ github.event_name }}" != 'pull_request' ]
         then
-          CACHE_IMAGE="${BUILD_IMAGE}"
+          CACHE_IMAGE="scratch"
+          for ci in "${BUILD_IMAGE}" "${GHCR_REPO}:master-${BUILD_SUFX}"
+          do
+            if docker manifest inspect ${ci} >/dev/null 2>/dev/null
+            then
+              CACHE_IMAGE="${ci}"
+              break
+            fi
+          done
           CACHE_SPEC="type=registry,ref=${BUILD_IMAGE}-buildcache"
-          if ! docker manifest inspect ${CACHE_IMAGE} >/dev/null 2>/dev/null
-          then
-             CACHE_IMAGE="scratch"
-          fi
           DO_PUSH="true"
         else
           CACHE_IMAGE="scratch"
