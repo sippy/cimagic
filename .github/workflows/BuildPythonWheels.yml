@@ -39,6 +39,11 @@ on:
         type: boolean
         required: false
         default: false
+      ghcr_repo:
+        description: 'Name of the GHCR.io repo'
+        type: string
+        required: false
+        default: ${{ github.repository_owner }}/${{ github.event.repository.name }}
 
 jobs:
   bin:
@@ -49,7 +54,7 @@ jobs:
     env:
       PY_VER: ${{ matrix.python-version }}
       BASE_IMAGE: quay.io/pypa/manylinux_${{ matrix.mnl-version }}:latest
-      GHCR_REPO: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}
+      GHCR_REPO: ghcr.io/${{ inputs.ghcr_repo }}
       BUILD_SUFX: py${{ matrix.python-version }}-mnl${{ matrix.mnl-version }}
     strategy:
       fail-fast: false
