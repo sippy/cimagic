@@ -45,7 +45,7 @@ jobs:
     steps:
     - name: Checkout repository
       if: inputs.release_files_script != ''
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         submodules: ${{ inputs.submodules_recursive && 'recursive' || 'false' }}
 
@@ -85,7 +85,7 @@ jobs:
 
     - name: Upload generated release files
       if: inputs.release_files_script != ''
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: release-script-output
         path: release-script-output
@@ -99,7 +99,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         submodules: ${{ inputs.submodules_recursive && 'recursive' || 'false' }}
 
@@ -170,7 +170,7 @@ jobs:
 
     - name: Download generated release files
       if: inputs.release_files_script != '' && needs.generate_release_files.outputs.files != ''
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: release-script-output
         path: release-script-output
