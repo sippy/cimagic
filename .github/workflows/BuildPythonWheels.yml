@@ -151,6 +151,7 @@ jobs:
         GIT_BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}"
         GIT_BRANCH="${GIT_BRANCH#refs/tags/}"
         BUILD_IMAGE="${GHCR_REPO}:${GIT_BRANCH}-${BUILD_SUFX}"
+        D_CACHE_IMAGE="${GHCR_REPO}-buildcache:${GIT_BRANCH}-${BUILD_SUFX}"
         if [ "${{ github.event_name }}" != 'pull_request' ]
         then
           CACHE_IMAGE="scratch"
@@ -162,7 +163,7 @@ jobs:
               break
             fi
           done
-          CACHE_SPEC="type=registry,ref=${BUILD_IMAGE}-buildcache"
+          CACHE_SPEC="type=registry,ref=${D_CACHE_IMAGE}"
           DO_PUSH="true"
         else
           CACHE_IMAGE="scratch"
