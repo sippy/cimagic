@@ -49,6 +49,11 @@ on:
         type: string
         required: false
         default: 'moby/buildkit:buildx-stable-1'
+      qemu_image:
+        description: 'Binfmt image to use for QEMU static binaries'
+        type: string
+        required: false
+        default: 'tonistiigi/binfmt:latest'
 
 jobs:
   bin:
@@ -101,26 +106,37 @@ jobs:
       with:
         python-version: ${{ env.PY_VER }}
 
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v4
-      with:
-        cache-image: false
-
-    - name: Pull BuildKit image
+    - name: Pull QEMU binfmt image
       shell: bash
       env:
-        BUILDKIT_IMAGE: ${{ inputs.buildkit_image }}
-      run: |
+        DOCKER_IMAGE: ${{ inputs.qemu_image }}
+      run: &pull_docker_image |
         set -euo pipefail
         for attempt in 1 2 3 4 5
         do
-          if docker pull "${BUILDKIT_IMAGE}"
+          if docker pull "${DOCKER_IMAGE}"
           then
             exit 0
           fi
           sleep "$((2 ** attempt))"
         done
-        docker pull "${BUILDKIT_IMAGE}"
+        docker pull "${DOCKER_IMAGE}"
+
+    - name: Set up QEMU
+      shell: bash
+      env:
+        QEMU_IMAGE: ${{ inputs.qemu_image }}
+      run: |
+        set -euo pipefail
+        docker image inspect "${QEMU_IMAGE}" >/dev/null
+        docker run --rm --privileged "${QEMU_IMAGE}" --version
+        docker run --rm --privileged "${QEMU_IMAGE}" --install all
+
+    - name: Pull BuildKit image
+      shell: bash
+      env:
+        DOCKER_IMAGE: ${{ inputs.buildkit_image }}
+      run: *pull_docker_image
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v4
