@@ -56,9 +56,28 @@ on:
         default: 'tonistiigi/binfmt:latest'
 
 jobs:
+  cache_qemu_image:
+    name: Cache QEMU Image
+    uses: ./.github/workflows/GetCachedContainer.yml
+    with:
+      image: ${{ inputs.qemu_image }}
+      cache-key-prefix: qemu-binfmt-image
+      cache-name: qemu-binfmt-image
+
+  cache_buildkit_image:
+    name: Cache BuildKit Image
+    uses: ./.github/workflows/GetCachedContainer.yml
+    with:
+      image: ${{ inputs.buildkit_image }}
+      cache-key-prefix: buildkit-image
+      cache-name: buildkit-image
+
   bin:
     name: ManyLinux
     runs-on: ubuntu-latest
+    needs:
+    - cache_qemu_image
+    - cache_buildkit_image
     permissions:
       packages: write
     env:
@@ -105,52 +124,6 @@ jobs:
       uses: actions/setup-python@v6
       with:
         python-version: ${{ env.PY_VER }}
-
-    - name: Pull QEMU binfmt image
-      shell: bash
-      env:
-        DOCKER_IMAGE: ${{ inputs.qemu_image }}
-      run: &pull_docker_image |
-        set -euo pipefail
-        for attempt in 1 2 3 4 5
-        do
-          if docker pull "${DOCKER_IMAGE}"
-          then
-            exit 0
-          fi
-          sleep "$((2 ** attempt))"
-        done
-        docker pull "${DOCKER_IMAGE}"
-
-    - name: Set up QEMU
-      shell: bash
-      env:
-        QEMU_IMAGE: ${{ inputs.qemu_image }}
-      run: |
-        set -euo pipefail
-        docker image inspect "${QEMU_IMAGE}" >/dev/null
-        docker run --rm --privileged "${QEMU_IMAGE}" --version
-        docker run --rm --privileged "${QEMU_IMAGE}" --install all
-
-    - name: Pull BuildKit image
-      shell: bash
-      env:
-        DOCKER_IMAGE: ${{ inputs.buildkit_image }}
-      run: *pull_docker_image
-
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v4
-      with:
-        driver-opts: |
-          image=${{ inputs.buildkit_image }}
-
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v4
-      if: github.event_name != 'pull_request'
-      with:
-        registry: ghcr.io
-        username: ${{ github.repository_owner }}
-        password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Set dynamic environment
       id: set-env
@@ -203,6 +176,49 @@ jobs:
         echo "DO_PUSH=${DO_PUSH}" >> $GITHUB_ENV
         echo "CCACHE_IMG_TAG=${CCACHE_IMG_TAG}" >> $GITHUB_ENV
         echo "TIMESTAMP=${TIMESTAMP}" >> $GITHUB_ENV
+
+    - name: Restore QEMU binfmt image cache
+      uses: actions/cache/restore@v5
+      with:
+        path: ${{ needs.cache_qemu_image.outputs.image-cache-path }}
+        key: ${{ needs.cache_qemu_image.outputs.image-cache-key }}
+        fail-on-cache-miss: true
+
+    - name: Load QEMU binfmt image
+      run: docker load --input "${{ needs.cache_qemu_image.outputs.image-cache-tar }}"
+
+    - name: Set up QEMU
+      env:
+        QEMU_IMAGE: ${{ inputs.qemu_image }}
+      run: |
+        set -euo pipefail
+        docker image inspect "${QEMU_IMAGE}" >/dev/null
+        docker run --rm --privileged "${QEMU_IMAGE}" --version
+        docker run --rm --privileged "${QEMU_IMAGE}" --install all
+
+    - name: Restore BuildKit image cache
+      uses: actions/cache/restore@v5
+      with:
+        path: ${{ needs.cache_buildkit_image.outputs.image-cache-path }}
+        key: ${{ needs.cache_buildkit_image.outputs.image-cache-key }}
+        fail-on-cache-miss: true
+
+    - name: Load BuildKit image
+      run: docker load --input "${{ needs.cache_buildkit_image.outputs.image-cache-tar }}"
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v4
+      with:
+        driver-opts: |
+          image=${{ inputs.buildkit_image }}
+
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@v4
+      if: github.event_name != 'pull_request'
+      with:
+        registry: ghcr.io
+        username: ${{ github.repository_owner }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Build Binary Wheels
       uses: docker/build-push-action@v7

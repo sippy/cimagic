@@ -1,0 +1,192 @@
+name: 'Get Cached Container'
+description: 'Pull a Docker image once, store it in the GitHub Actions cache, and expose its cache key'
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: 'Container image reference to cache'
+        type: string
+        required: true
+      platform:
+        description: 'Optional platform to pass to docker pull, for example linux/amd64'
+        type: string
+        required: false
+        default: ''
+      platforms:
+        description: 'Optional comma-separated platforms to pull, host for the runner platform, or all to pull every platform in the image manifest'
+        type: string
+        required: false
+        default: 'all'
+      cache-key-prefix:
+        description: 'Prefix for the generated cache key'
+        type: string
+        required: false
+        default: 'container-image'
+      cache-name:
+        description: 'Filesystem-safe cache payload name; defaults to a short hash derived from the image reference'
+        type: string
+        required: false
+        default: ''
+      cache-version:
+        description: 'Optional cache-busting value included in the generated cache key'
+        type: string
+        required: false
+        default: ''
+      pull-retries:
+        description: 'Number of docker pull attempts before failing'
+        type: number
+        required: false
+        default: 7
+      runner:
+        description: 'Runner label to use for the cache preparation job'
+        type: string
+        required: false
+        default: 'ubuntu-latest'
+    outputs:
+      image:
+        description: 'Container image reference that was cached'
+        value: ${{ jobs.cache_container.outputs.image }}
+      platforms:
+        description: 'Comma-separated list of platforms cached'
+        value: ${{ jobs.cache_container.outputs.platforms }}
+      image-cache-key:
+        description: 'Cache key containing the saved Docker image tarball'
+        value: ${{ jobs.cache_container.outputs.image-cache-key }}
+      image-hash:
+        description: 'Stable hash used in the generated cache key'
+        value: ${{ jobs.cache_container.outputs.image-hash }}
+      image-cache-name:
+        description: 'Filesystem-safe cache payload name'
+        value: ${{ jobs.cache_container.outputs.image-cache-name }}
+      image-cache-path:
+        description: 'Directory path containing the saved Docker image tarball'
+        value: ${{ jobs.cache_container.outputs.image-cache-path }}
+      image-cache-tar:
+        description: 'Path to the saved Docker image tarball'
+        value: ${{ jobs.cache_container.outputs.image-cache-tar }}
+      cache-hit:
+        description: 'Whether the image tarball was restored from cache'
+        value: ${{ jobs.cache_container.outputs.cache-hit }}
+
+jobs:
+  cache_container:
+    name: Cache ${{ inputs.image }}
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      platforms: ${{ steps.meta.outputs.platforms }}
+      image-cache-key: ${{ steps.meta.outputs.image-cache-key }}
+      image-hash: ${{ steps.meta.outputs.image-hash }}
+      image-cache-name: ${{ steps.meta.outputs.image-cache-name }}
+      image-cache-path: ${{ steps.meta.outputs.image-cache-path }}
+      image-cache-tar: ${{ steps.meta.outputs.image-cache-tar }}
+      cache-hit: ${{ steps.container_cache.outputs.cache-hit }}
+    steps:
+    - name: Compute image metadata
+      id: meta
+      shell: bash
+      env:
+        CACHE_KEY_PREFIX: ${{ inputs.cache-key-prefix }}
+        CACHE_NAME: ${{ inputs.cache-name }}
+        CACHE_VERSION: ${{ inputs.cache-version }}
+        DOCKER_IMAGE: ${{ inputs.image }}
+        PLATFORM: ${{ inputs.platform }}
+        PLATFORMS: ${{ inputs.platforms }}
+      run: |
+        set -euo pipefail
+        CACHE_KEY_PREFIX="$(printf '%s' "${CACHE_KEY_PREFIX}" | sed 's|[^a-zA-Z0-9_.-]|-|g')"
+        if [ -n "${PLATFORM}" ] && [ "${PLATFORMS}" != "all" ]
+        then
+          echo "Use either platform or platforms, not both." >&2
+          exit 1
+        fi
+        if [ -n "${PLATFORM}" ]
+        then
+          PLATFORMS="${PLATFORM}"
+        elif [ "${PLATFORMS}" = "host" ]
+        then
+          PLATFORMS="$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}')"
+        elif [ "${PLATFORMS}" = "all" ]
+        then
+          PLATFORMS="$(docker manifest inspect "${DOCKER_IMAGE}" | \
+            jq -r 'if .manifests then .manifests[] | "\(.platform.os)/\(.platform.architecture)\(if .platform.variant != null then "/\(.platform.variant)" else "" end)" else empty end' | \
+            sort -u | grep -v unknown | paste -sd ',')"
+          if [ -z "${PLATFORMS}" ]
+          then
+            echo "No manifest-list platforms found for ${DOCKER_IMAGE}; caching the default pull platform."
+          fi
+        fi
+        HASH_INPUT="$(printf '%s\n%s\n%s' "${DOCKER_IMAGE}" "${PLATFORMS}" "${CACHE_VERSION}")"
+        IMAGE_HASH="$(printf '%s' "${HASH_INPUT}" | sha256sum | cut -c1-16)"
+        if [ -z "${CACHE_NAME}" ]
+        then
+          IMAGE_NAME_HASH="$(printf '%s' "${DOCKER_IMAGE}" | md5sum | cut -c1-16)"
+          CACHE_NAME="container-image-${IMAGE_NAME_HASH}"
+        fi
+        if [ -z "${CACHE_KEY_PREFIX}" ]
+        then
+          CACHE_KEY_PREFIX="container-image"
+        fi
+        CACHE_DIR="${RUNNER_TEMP}/${CACHE_NAME}-cache"
+        IMAGE_TAR="${CACHE_DIR}/${CACHE_NAME}.tar"
+        IMAGE_CACHE_KEY="${CACHE_KEY_PREFIX}-${RUNNER_OS}-${IMAGE_HASH}"
+        mkdir -p "${CACHE_DIR}"
+        echo "image=${DOCKER_IMAGE}" >> "${GITHUB_OUTPUT}"
+        echo "platforms=${PLATFORMS}" >> "${GITHUB_OUTPUT}"
+        echo "image-cache-key=${IMAGE_CACHE_KEY}" >> "${GITHUB_OUTPUT}"
+        echo "image-hash=${IMAGE_HASH}" >> "${GITHUB_OUTPUT}"
+        echo "image-cache-name=${CACHE_NAME}" >> "${GITHUB_OUTPUT}"
+        echo "image-cache-path=${CACHE_DIR}" >> "${GITHUB_OUTPUT}"
+        echo "image-cache-tar=${IMAGE_TAR}" >> "${GITHUB_OUTPUT}"
+
+    - name: Restore container image cache
+      id: container_cache
+      uses: actions/cache@v5
+      with:
+        path: ${{ steps.meta.outputs.image-cache-path }}
+        key: ${{ steps.meta.outputs.image-cache-key }}
+
+    - name: Pull and save container image
+      if: ${{ steps.container_cache.outputs.cache-hit != 'true' }}
+      shell: bash
+      env:
+        DOCKER_IMAGE: ${{ inputs.image }}
+        PLATFORMS: ${{ steps.meta.outputs.platforms }}
+        PULL_ATTEMPTS: ${{ inputs.pull-retries }}
+        IMAGE_TAR: ${{ steps.meta.outputs.image-cache-tar }}
+      run: |
+        set -euo pipefail
+        if [ "${PULL_ATTEMPTS}" -lt 1 ]
+        then
+          PULL_ATTEMPTS=1
+        fi
+        if [ -n "${PLATFORMS}" ]
+        then
+          IFS=',' read -r -a platforms <<< "${PLATFORMS}"
+        else
+          platforms=("")
+        fi
+        for platform in "${platforms[@]}"
+        do
+          pull_args=()
+          if [ -n "${platform}" ]
+          then
+            pull_args+=(--platform "${platform}")
+          fi
+          for attempt in $(seq 1 "${PULL_ATTEMPTS}")
+          do
+            if docker pull "${pull_args[@]}" "${DOCKER_IMAGE}"
+            then
+              break
+            fi
+            if [ "${attempt}" -eq "${PULL_ATTEMPTS}" ]
+            then
+              echo "Failed to pull ${DOCKER_IMAGE} ${platform:+for ${platform} }after ${PULL_ATTEMPTS} attempt(s)." >&2
+              exit 1
+            fi
+            STIME="$((1 + RANDOM % (2 ** attempt)))"
+            sleep "${STIME}"
+          done
+        done
+        docker save "${DOCKER_IMAGE}" --output "${IMAGE_TAR}"
