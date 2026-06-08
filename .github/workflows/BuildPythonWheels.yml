@@ -44,6 +44,11 @@ on:
         type: string
         required: false
         default: ${{ github.repository_owner }}/${{ github.event.repository.name }}
+      buildkit_image:
+        description: 'BuildKit image to use for docker/setup-buildx-action'
+        type: string
+        required: false
+        default: 'moby/buildkit:buildx-stable-1'
 
 jobs:
   bin:
@@ -99,8 +104,27 @@ jobs:
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v4
 
+    - name: Pull BuildKit image
+      shell: bash
+      env:
+        BUILDKIT_IMAGE: ${{ inputs.buildkit_image }}
+      run: |
+        set -euo pipefail
+        for attempt in 1 2 3 4 5
+        do
+          if docker pull "${BUILDKIT_IMAGE}"
+          then
+            exit 0
+          fi
+          sleep "$((2 ** attempt))"
+        done
+        docker pull "${BUILDKIT_IMAGE}"
+
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v4
+      with:
+        driver-opts: |
+          image=${{ inputs.buildkit_image }}
 
     - name: Login to GitHub Container Registry
       uses: docker/login-action@v4
