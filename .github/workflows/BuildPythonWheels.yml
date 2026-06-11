@@ -61,6 +61,7 @@ jobs:
     uses: ./.github/workflows/GetCachedContainer.yml
     with:
       image: ${{ inputs.qemu_image }}
+      platforms: host
       cache-key-prefix: qemu-binfmt-image
       cache-name: qemu-binfmt-image
 
@@ -69,8 +70,21 @@ jobs:
     uses: ./.github/workflows/GetCachedContainer.yml
     with:
       image: ${{ inputs.buildkit_image }}
+      platforms: host
       cache-key-prefix: buildkit-image
       cache-name: buildkit-image
+
+  cache_manylinux_image:
+    name: Cache ManyLinux Image
+    strategy:
+      fail-fast: false
+      matrix:
+        mnl-version: ${{ fromJson(inputs.mnl_versions) }}
+    uses: ./.github/workflows/GetCachedContainer.yml
+    with:
+      image: quay.io/pypa/manylinux_${{ matrix.mnl-version }}:latest
+      cache-key-prefix: manylinux-image
+      cache-name: manylinux-${{ matrix.mnl-version }}-image
 
   bin:
     name: ManyLinux
@@ -78,6 +92,7 @@ jobs:
     needs:
     - cache_qemu_image
     - cache_buildkit_image
+    - cache_manylinux_image
     permissions:
       packages: write
     env:
@@ -205,6 +220,32 @@ jobs:
 
     - name: Load BuildKit image
       run: docker load --input "${{ needs.cache_buildkit_image.outputs.image-cache-tar }}"
+
+    - name: Compute ManyLinux image cache metadata
+      id: manylinux-cache
+      env:
+        DOCKER_IMAGE: ${{ env.BASE_IMAGE }}
+      run: |
+        set -euo pipefail
+        CACHE_NAME="manylinux-${{ matrix.mnl-version }}-image"
+        HASH_INPUT="$(printf '%s\n%s\n%s' "${DOCKER_IMAGE}" "${PLATFORMS}" "")"
+        IMAGE_HASH="$(printf '%s' "${HASH_INPUT}" | sha256sum | cut -c1-16)"
+        CACHE_DIR="${RUNNER_TEMP}/${CACHE_NAME}-cache"
+        IMAGE_TAR="${CACHE_DIR}/${CACHE_NAME}.tar"
+        IMAGE_CACHE_KEY="manylinux-image-${RUNNER_OS}-${IMAGE_HASH}"
+        echo "image-cache-key=${IMAGE_CACHE_KEY}" >> "${GITHUB_OUTPUT}"
+        echo "image-cache-path=${CACHE_DIR}" >> "${GITHUB_OUTPUT}"
+        echo "image-cache-tar=${IMAGE_TAR}" >> "${GITHUB_OUTPUT}"
+
+    - name: Restore ManyLinux image cache
+      uses: actions/cache/restore@v5
+      with:
+        path: ${{ steps.manylinux-cache.outputs.image-cache-path }}
+        key: ${{ steps.manylinux-cache.outputs.image-cache-key }}
+        fail-on-cache-miss: true
+
+    - name: Load ManyLinux image
+      run: docker load --input "${{ steps.manylinux-cache.outputs.image-cache-tar }}"
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v4
