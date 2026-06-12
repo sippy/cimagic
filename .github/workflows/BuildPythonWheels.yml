@@ -59,10 +59,41 @@ on:
         type: string
         required: false
         default: 'tonistiigi/binfmt:latest'
+      qemu_image_cache_key:
+        description: 'Optional actions/cache key for a pre-cached QEMU binfmt image'
+        type: string
+        required: false
+        default: ''
+      qemu_image_cache_path:
+        description: 'Optional actions/cache path for a pre-cached QEMU binfmt image'
+        type: string
+        required: false
+        default: ''
+      qemu_image_cache_tar:
+        description: 'Optional tarball path for a pre-cached QEMU binfmt image'
+        type: string
+        required: false
+        default: ''
+      buildkit_image_cache_key:
+        description: 'Optional actions/cache key for a pre-cached BuildKit image'
+        type: string
+        required: false
+        default: ''
+      buildkit_image_cache_path:
+        description: 'Optional actions/cache path for a pre-cached BuildKit image'
+        type: string
+        required: false
+        default: ''
+      buildkit_image_cache_tar:
+        description: 'Optional tarball path for a pre-cached BuildKit image'
+        type: string
+        required: false
+        default: ''
 
 jobs:
   cache_qemu_image:
     name: Cache QEMU Image
+    if: ${{ inputs.qemu_image_cache_key == '' || inputs.qemu_image_cache_path == '' || inputs.qemu_image_cache_tar == '' }}
     uses: ./.github/workflows/GetCachedContainer.yml
     with:
       image: ${{ inputs.qemu_image }}
@@ -72,6 +103,7 @@ jobs:
 
   cache_buildkit_image:
     name: Cache BuildKit Image
+    if: ${{ inputs.buildkit_image_cache_key == '' || inputs.buildkit_image_cache_path == '' || inputs.buildkit_image_cache_tar == '' }}
     uses: ./.github/workflows/GetCachedContainer.yml
     with:
       image: ${{ inputs.buildkit_image }}
@@ -94,6 +126,7 @@ jobs:
   bin:
     name: ManyLinux
     runs-on: ubuntu-latest
+    if: ${{ always() && !cancelled() && needs.cache_qemu_image.result != 'failure' && needs.cache_qemu_image.result != 'cancelled' && needs.cache_buildkit_image.result != 'failure' && needs.cache_buildkit_image.result != 'cancelled' && needs.cache_manylinux_image.result != 'failure' && needs.cache_manylinux_image.result != 'cancelled' }}
     needs:
     - cache_qemu_image
     - cache_buildkit_image
@@ -210,12 +243,12 @@ jobs:
     - name: Restore QEMU binfmt image cache
       uses: actions/cache/restore@v5
       with:
-        path: ${{ needs.cache_qemu_image.outputs.image-cache-path }}
-        key: ${{ needs.cache_qemu_image.outputs.image-cache-key }}
+        path: ${{ inputs.qemu_image_cache_key != '' && inputs.qemu_image_cache_path != '' && inputs.qemu_image_cache_tar != '' && inputs.qemu_image_cache_path || needs.cache_qemu_image.outputs.image-cache-path }}
+        key: ${{ inputs.qemu_image_cache_key != '' && inputs.qemu_image_cache_path != '' && inputs.qemu_image_cache_tar != '' && inputs.qemu_image_cache_key || needs.cache_qemu_image.outputs.image-cache-key }}
         fail-on-cache-miss: true
 
     - name: Load QEMU binfmt image
-      run: docker load --input "${{ needs.cache_qemu_image.outputs.image-cache-tar }}"
+      run: docker load --input "${{ inputs.qemu_image_cache_key != '' && inputs.qemu_image_cache_path != '' && inputs.qemu_image_cache_tar != '' && inputs.qemu_image_cache_tar || needs.cache_qemu_image.outputs.image-cache-tar }}"
 
     - name: Set up QEMU
       env:
@@ -229,12 +262,12 @@ jobs:
     - name: Restore BuildKit image cache
       uses: actions/cache/restore@v5
       with:
-        path: ${{ needs.cache_buildkit_image.outputs.image-cache-path }}
-        key: ${{ needs.cache_buildkit_image.outputs.image-cache-key }}
+        path: ${{ inputs.buildkit_image_cache_key != '' && inputs.buildkit_image_cache_path != '' && inputs.buildkit_image_cache_tar != '' && inputs.buildkit_image_cache_path || needs.cache_buildkit_image.outputs.image-cache-path }}
+        key: ${{ inputs.buildkit_image_cache_key != '' && inputs.buildkit_image_cache_path != '' && inputs.buildkit_image_cache_tar != '' && inputs.buildkit_image_cache_key || needs.cache_buildkit_image.outputs.image-cache-key }}
         fail-on-cache-miss: true
 
     - name: Load BuildKit image
-      run: docker load --input "${{ needs.cache_buildkit_image.outputs.image-cache-tar }}"
+      run: docker load --input "${{ inputs.buildkit_image_cache_key != '' && inputs.buildkit_image_cache_path != '' && inputs.buildkit_image_cache_tar != '' && inputs.buildkit_image_cache_tar || needs.cache_buildkit_image.outputs.image-cache-tar }}"
 
     - name: Compute ManyLinux image cache metadata
       id: manylinux-cache
