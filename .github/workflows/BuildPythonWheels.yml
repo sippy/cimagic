@@ -5,7 +5,7 @@ on:
   workflow_call:
     inputs:
       dockerfile:
-        description: 'Dockerfile to use'
+        description: 'Dockerfile to use for ManyLinux builds'
         type: string
         required: false
         default: './docker/Dockerfile.python_wheels'
@@ -39,6 +39,11 @@ on:
         type: boolean
         required: false
         default: false
+      push_build_results:
+        description: 'Push built wheel container images to the registry'
+        type: boolean
+        required: false
+        default: true
       ghcr_repo:
         description: 'Name of the GHCR.io repo'
         type: string
@@ -98,6 +103,8 @@ jobs:
     env:
       PY_VER: ${{ matrix.python-version }}
       BASE_IMAGE: quay.io/pypa/manylinux_${{ matrix.mnl-version }}:latest
+      BASE_KIND: manylinux
+      MNL_VERSION: ${{ matrix.mnl-version }}
       GHCR_REPO: ghcr.io/${{ inputs.ghcr_repo }}
       BUILD_SUFX: py${{ matrix.python-version }}-mnl${{ matrix.mnl-version }}
     strategy:
@@ -109,7 +116,7 @@ jobs:
     - name: Maximize build space
       if: ${{ inputs.maximize_space }}
       shell: sh -x -e {0}
-      run: |
+      run: &maximize_build_space |
         echo "Memory and swap:"
         sudo free -h
         echo
@@ -143,13 +150,13 @@ jobs:
     - name: Set dynamic environment
       id: set-env
       shell: bash -o pipefail {0}
-      run: |
-        PLATFORMS="`docker manifest inspect ${{ env.BASE_IMAGE }} | \
+      run: &set_dynamic_environment |
+        PLATFORMS="$(docker manifest inspect "${BASE_IMAGE}" | \
           jq -r '.manifests[] | "\(.platform.os)/\(.platform.architecture)\(if .platform.variant != null then "/\(.platform.variant)" else "" end)"' | \
-          sort -u | grep -v unknown | paste -sd ','`"
+          sort -u | grep -v unknown | paste -sd ',')"
         if [ ! -n "${PLATFORMS}" ]
         then
-          echo "Cannot get list of platforms supported by the ${{ inputs.image }}." >&2
+          echo "Cannot get list of platforms supported by ${BASE_IMAGE}." >&2
           exit 1
         fi
         GIT_BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}"
@@ -168,16 +175,24 @@ jobs:
             fi
           done
           CACHE_SPEC="type=registry,ref=${D_CACHE_IMAGE}"
-          DO_PUSH="true"
+          DO_PUSH="${{ inputs.push_build_results }}"
         else
           CACHE_IMAGE="scratch"
           CACHE_SPEC="gha"
           DO_PUSH="false"
         fi
-        CCACHE_MNL_TAG="`echo '${{ matrix.mnl-version }}' | sed 's|_|.|g'`"
-        CCACHE_IMG_TAG="manylinux-${CCACHE_MNL_TAG}"
-        PY_SVER="3${PY_VER#3.}"
-        PYTHON_CMD="/opt/python/cp${PY_SVER}-cp${PY_SVER}/bin/python"
+        case "${BASE_KIND}" in
+          manylinux)
+            CCACHE_MNL_TAG="$(printf '%s' "${MNL_VERSION}" | sed 's|_|.|g')"
+            CCACHE_IMG_TAG="manylinux-${CCACHE_MNL_TAG}"
+            PY_SVER="3${PY_VER#3.}"
+            PYTHON_CMD="/opt/python/cp${PY_SVER}-cp${PY_SVER}/bin/python"
+            ;;
+          *)
+            echo "Unsupported base image kind: ${BASE_KIND}" >&2
+            exit 1
+            ;;
+        esac
         TIMESTAMP="`git log -1 --pretty=%ct`"
         echo "Platforms: ${PLATFORMS}"
         echo "Build Image: ${BUILD_IMAGE}"
