@@ -18,7 +18,7 @@ on:
         description: 'Versions of Python to build against'
         type: string
         required: false
-        default: '["3.9", "3.10", "3.11", "3.12", "3.13"]'
+        default: '["3.10", "3.11", "3.12", "3.13", "3.14"]'
       mnl_versions:
         description: 'Versions of ManyLinux to build against'
         type: string
