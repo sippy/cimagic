@@ -33,6 +33,16 @@ on:
         type: string
         required: false
         default: ''
+      archive-format:
+        description: 'Archive format to cache: docker for docker load, oci for multi-platform OCI archives'
+        type: string
+        required: false
+        default: 'docker'
+      archive-reference:
+        description: 'Image reference stored inside OCI archives'
+        type: string
+        required: false
+        default: 'cached-image:latest'
       pull-retries:
         description: 'Number of docker pull attempts before failing'
         type: number
@@ -93,8 +103,18 @@ jobs:
         DOCKER_IMAGE: ${{ inputs.image }}
         PLATFORM: ${{ inputs.platform }}
         PLATFORMS: ${{ inputs.platforms }}
+        ARCHIVE_FORMAT: ${{ inputs.archive-format }}
+        ARCHIVE_REFERENCE: ${{ inputs.archive-reference }}
       run: |
         set -euo pipefail
+        case "${ARCHIVE_FORMAT}" in
+          docker|oci)
+            ;;
+          *)
+            echo "Unsupported archive format: ${ARCHIVE_FORMAT}" >&2
+            exit 1
+            ;;
+        esac
         CACHE_KEY_PREFIX="$(printf '%s' "${CACHE_KEY_PREFIX}" | sed 's|[^a-zA-Z0-9_.-]|-|g')"
         if [ -n "${PLATFORM}" ] && [ "${PLATFORMS}" != "all" ]
         then
@@ -155,38 +175,69 @@ jobs:
         PLATFORMS: ${{ steps.meta.outputs.platforms }}
         PULL_ATTEMPTS: ${{ inputs.pull-retries }}
         IMAGE_TAR: ${{ steps.meta.outputs.image-cache-tar }}
+        ARCHIVE_FORMAT: ${{ inputs.archive-format }}
+        ARCHIVE_REFERENCE: ${{ inputs.archive-reference }}
       run: |
         set -euo pipefail
         if [ "${PULL_ATTEMPTS}" -lt 1 ]
         then
           PULL_ATTEMPTS=1
         fi
-        if [ -n "${PLATFORMS}" ]
-        then
-          IFS=',' read -r -a platforms <<< "${PLATFORMS}"
-        else
-          platforms=("")
-        fi
-        for platform in "${platforms[@]}"
-        do
-          pull_args=()
-          if [ -n "${platform}" ]
-          then
-            pull_args+=(--platform "${platform}")
-          fi
-          for attempt in $(seq 1 "${PULL_ATTEMPTS}")
-          do
-            if docker pull "${pull_args[@]}" "${DOCKER_IMAGE}"
+        case "${ARCHIVE_FORMAT}" in
+          docker)
+            if [ -n "${PLATFORMS}" ]
             then
-              break
+              IFS=',' read -r -a platforms <<< "${PLATFORMS}"
+            else
+              platforms=("")
             fi
-            if [ "${attempt}" -eq "${PULL_ATTEMPTS}" ]
+            for platform in "${platforms[@]}"
+            do
+              pull_args=()
+              if [ -n "${platform}" ]
+              then
+                pull_args+=(--platform "${platform}")
+              fi
+              for attempt in $(seq 1 "${PULL_ATTEMPTS}")
+              do
+                if docker pull "${pull_args[@]}" "${DOCKER_IMAGE}"
+                then
+                  break
+                fi
+                if [ "${attempt}" -eq "${PULL_ATTEMPTS}" ]
+                then
+                  echo "Failed to pull ${DOCKER_IMAGE} ${platform:+for ${platform} }after ${PULL_ATTEMPTS} attempt(s)." >&2
+                  exit 1
+                fi
+                STIME="$((1 + RANDOM % (2 ** attempt)))"
+                sleep "${STIME}"
+              done
+            done
+            docker save "${DOCKER_IMAGE}" --output "${IMAGE_TAR}"
+            ;;
+          oci)
+            if ! command -v skopeo >/dev/null 2>&1
             then
-              echo "Failed to pull ${DOCKER_IMAGE} ${platform:+for ${platform} }after ${PULL_ATTEMPTS} attempt(s)." >&2
-              exit 1
+              sudo apt-get update
+              sudo apt-get install -y skopeo
             fi
-            STIME="$((1 + RANDOM % (2 ** attempt)))"
-            sleep "${STIME}"
-          done
-        done
-        docker save "${DOCKER_IMAGE}" --output "${IMAGE_TAR}"
+            for attempt in $(seq 1 "${PULL_ATTEMPTS}")
+            do
+              if skopeo copy --all "docker://${DOCKER_IMAGE}" "oci-archive:${IMAGE_TAR}:${ARCHIVE_REFERENCE}"
+              then
+                break
+              fi
+              if [ "${attempt}" -eq "${PULL_ATTEMPTS}" ]
+              then
+                echo "Failed to copy ${DOCKER_IMAGE} to OCI archive after ${PULL_ATTEMPTS} attempt(s)." >&2
+                exit 1
+              fi
+              STIME="$((1 + RANDOM % (2 ** attempt)))"
+              sleep "${STIME}"
+            done
+            ;;
+          *)
+            echo "Unsupported archive format: ${ARCHIVE_FORMAT}" >&2
+            exit 1
+            ;;
+        esac

@@ -122,6 +122,9 @@ jobs:
       image: quay.io/pypa/manylinux_${{ matrix.mnl-version }}:latest
       cache-key-prefix: manylinux-image
       cache-name: manylinux-${{ matrix.mnl-version }}-image
+      cache-version: oci-v1
+      archive-format: oci
+      archive-reference: cached-image:latest
 
   bin:
     name: ManyLinux
@@ -138,6 +141,8 @@ jobs:
       BASE_IMAGE: quay.io/pypa/manylinux_${{ matrix.mnl-version }}:latest
       BASE_KIND: manylinux
       MNL_VERSION: ${{ matrix.mnl-version }}
+      MANYLINUX_IMAGE_CACHE_VERSION: oci-v1
+      MANYLINUX_IMAGE_ARCHIVE_REF: cached-image:latest
       GHCR_REPO: ghcr.io/${{ inputs.ghcr_repo }}
       BUILD_SUFX: py${{ matrix.python-version }}-mnl${{ matrix.mnl-version }}
     strategy:
@@ -276,7 +281,7 @@ jobs:
       run: |
         set -euo pipefail
         CACHE_NAME="manylinux-${{ matrix.mnl-version }}-image"
-        HASH_INPUT="$(printf '%s\n%s\n%s' "${DOCKER_IMAGE}" "${PLATFORMS}" "")"
+        HASH_INPUT="$(printf '%s\n%s\n%s' "${DOCKER_IMAGE}" "${PLATFORMS}" "${MANYLINUX_IMAGE_CACHE_VERSION}")"
         IMAGE_HASH="$(printf '%s' "${HASH_INPUT}" | sha256sum | cut -c1-16)"
         CACHE_DIR="${RUNNER_TEMP}/${CACHE_NAME}-cache"
         IMAGE_TAR="${CACHE_DIR}/${CACHE_NAME}.tar"
@@ -292,14 +297,53 @@ jobs:
         key: ${{ steps.manylinux-cache.outputs.image-cache-key }}
         fail-on-cache-miss: true
 
-    - name: Load ManyLinux image
-      run: docker load --input "${{ steps.manylinux-cache.outputs.image-cache-tar }}"
+    - name: Start local image registry
+      run: |
+        set -euo pipefail
+        docker run -d --name local-registry -p 5000:5000 registry:2
+        for attempt in $(seq 1 30)
+        do
+          if curl -fsS http://localhost:5000/v2/ >/dev/null
+          then
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "Local image registry did not become ready." >&2
+        docker logs local-registry >&2 || true
+        exit 1
+
+    - name: Install Skopeo
+      run: |
+        set -euo pipefail
+        if ! command -v skopeo >/dev/null 2>&1
+        then
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+        fi
+
+    - name: Publish ManyLinux image to local registry
+      id: local-manylinux
+      env:
+        LOCAL_IMAGE: localhost:5000/pypa/manylinux_${{ matrix.mnl-version }}:latest
+      run: |
+        set -euo pipefail
+        skopeo copy --all \
+          --dest-tls-verify=false \
+          "oci-archive:${{ steps.manylinux-cache.outputs.image-cache-tar }}:${MANYLINUX_IMAGE_ARCHIVE_REF}" \
+          "docker://${LOCAL_IMAGE}"
+        echo "image=${LOCAL_IMAGE}" >> "${GITHUB_OUTPUT}"
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v4
       with:
         driver-opts: |
           image=${{ inputs.buildkit_image }}
+          network=host
+        buildkitd-config-inline: |
+          [registry."localhost:5000"]
+            http = true
+            insecure = true
 
     - name: Login to GitHub Container Registry
       uses: docker/login-action@v4
@@ -319,7 +363,7 @@ jobs:
         context: ${{ inputs.context }}
         file: ${{ inputs.dockerfile }}
         build-args: |
-          BASE_IMAGE=${{ env.BASE_IMAGE }}
+          BASE_IMAGE=${{ steps.local-manylinux.outputs.image }}
           PY_VER=${{ env.PY_VER }}
           PYTHON_CMD=${{ env.PYTHON_CMD }}
           CACHE_IMAGE=${{ env.CACHE_IMAGE }}
