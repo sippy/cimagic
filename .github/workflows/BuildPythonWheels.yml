@@ -136,6 +136,11 @@ jobs:
     - cache_manylinux_image
     permissions:
       packages: write
+    services:
+      registry:
+        image: registry:2
+        ports:
+        - 5000:5000
     env:
       PY_VER: ${{ matrix.python-version }}
       BASE_IMAGE: quay.io/pypa/manylinux_${{ matrix.mnl-version }}:latest
@@ -297,10 +302,9 @@ jobs:
         key: ${{ steps.manylinux-cache.outputs.image-cache-key }}
         fail-on-cache-miss: true
 
-    - name: Start local image registry
+    - name: Wait for local image registry
       run: |
         set -euo pipefail
-        docker run -d --name local-registry -p 5000:5000 registry:2
         for attempt in $(seq 1 30)
         do
           if curl -fsS http://localhost:5000/v2/ >/dev/null
@@ -310,7 +314,6 @@ jobs:
           sleep 1
         done
         echo "Local image registry did not become ready." >&2
-        docker logs local-registry >&2 || true
         exit 1
 
     - name: Install Skopeo
