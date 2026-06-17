@@ -126,14 +126,50 @@ jobs:
       archive-format: oci
       archive-reference: cached-image:latest
 
+  ccache_image_matrix:
+    name: Generate CCache Image Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.ccache-matrix.outputs.matrix }}
+    steps:
+    - name: Generate CCache image matrix
+      id: ccache-matrix
+      env:
+        MNL_VERSIONS: ${{ inputs.mnl_versions }}
+      run: |
+        set -euo pipefail
+        MATRIX="$(printf '%s' "${MNL_VERSIONS}" | jq -c '[.[] as $version | {
+          "mnl_version": $version,
+          "image": ("ghcr.io/sobomax/ccache:latest-manylinux-" + ($version | gsub("_"; "."))),
+          "cache_name": ("ccache-manylinux-" + $version + "-image")
+        }]')"
+        echo "matrix=${MATRIX}" >> "${GITHUB_OUTPUT}"
+
+  cache_ccache_image:
+    name: Cache CCache Image
+    needs: ccache_image_matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        ccache: ${{ fromJson(needs.ccache_image_matrix.outputs.matrix) }}
+    uses: ./.github/workflows/GetCachedContainer.yml
+    with:
+      image: ${{ matrix.ccache.image }}
+      cache-key-prefix: ccache-image
+      cache-name: ${{ matrix.ccache.cache_name }}
+      cache-version: oci-v1
+      archive-format: oci
+      archive-reference: cached-image:latest
+
   bin:
     name: ManyLinux
     runs-on: ubuntu-latest
-    if: ${{ always() && !cancelled() && needs.cache_qemu_image.result != 'failure' && needs.cache_qemu_image.result != 'cancelled' && needs.cache_buildkit_image.result != 'failure' && needs.cache_buildkit_image.result != 'cancelled' && needs.cache_manylinux_image.result != 'failure' && needs.cache_manylinux_image.result != 'cancelled' }}
+    if: ${{ always() && !cancelled() && needs.cache_qemu_image.result != 'failure' && needs.cache_qemu_image.result != 'cancelled' && needs.cache_buildkit_image.result != 'failure' && needs.cache_buildkit_image.result != 'cancelled' && needs.cache_manylinux_image.result != 'failure' && needs.cache_manylinux_image.result != 'cancelled' && needs.cache_ccache_image.result != 'failure' && needs.cache_ccache_image.result != 'cancelled' }}
     needs:
     - cache_qemu_image
     - cache_buildkit_image
     - cache_manylinux_image
+    - cache_ccache_image
     permissions:
       packages: write
     services:
@@ -148,6 +184,8 @@ jobs:
       MNL_VERSION: ${{ matrix.mnl-version }}
       MANYLINUX_IMAGE_CACHE_VERSION: oci-v1
       MANYLINUX_IMAGE_ARCHIVE_REF: cached-image:latest
+      CCACHE_IMAGE_CACHE_VERSION: oci-v1
+      CCACHE_IMAGE_ARCHIVE_REF: cached-image:latest
       GHCR_REPO: ghcr.io/${{ inputs.ghcr_repo }}
       BUILD_SUFX: py${{ matrix.python-version }}-mnl${{ matrix.mnl-version }}
     strategy:
@@ -228,6 +266,7 @@ jobs:
           manylinux)
             CCACHE_MNL_TAG="$(printf '%s' "${MNL_VERSION}" | sed 's|_|.|g')"
             CCACHE_IMG_TAG="manylinux-${CCACHE_MNL_TAG}"
+            CCACHE_IMAGE="ghcr.io/sobomax/ccache:latest-${CCACHE_IMG_TAG}"
             PY_SVER="3${PY_VER#3.}"
             PYTHON_CMD="/opt/python/cp${PY_SVER}-cp${PY_SVER}/bin/python"
             ;;
@@ -240,12 +279,14 @@ jobs:
         echo "Platforms: ${PLATFORMS}"
         echo "Build Image: ${BUILD_IMAGE}"
         echo "Cache Image: ${CACHE_IMAGE}"
+        echo "CCache Image: ${CCACHE_IMAGE}"
         echo "Timestamp: ${TIMESTAMP}"
         echo "PLATFORMS=${PLATFORMS}" >> $GITHUB_ENV
         echo "CACHE_SPEC=${CACHE_SPEC}" >> $GITHUB_ENV
         echo "PYTHON_CMD=${PYTHON_CMD}" >> $GITHUB_ENV
         echo "BUILD_IMAGE=${BUILD_IMAGE}" >> $GITHUB_ENV
         echo "CACHE_IMAGE=${CACHE_IMAGE}" >> $GITHUB_ENV
+        echo "CCACHE_IMAGE=${CCACHE_IMAGE}" >> $GITHUB_ENV
         echo "DO_PUSH=${DO_PUSH}" >> $GITHUB_ENV
         echo "CCACHE_IMG_TAG=${CCACHE_IMG_TAG}" >> $GITHUB_ENV
         echo "TIMESTAMP=${TIMESTAMP}" >> $GITHUB_ENV
@@ -302,6 +343,37 @@ jobs:
         key: ${{ steps.manylinux-cache.outputs.image-cache-key }}
         fail-on-cache-miss: true
 
+    - name: Compute CCache image cache metadata
+      id: ccache-cache
+      env:
+        DOCKER_IMAGE: ${{ env.CCACHE_IMAGE }}
+      run: |
+        set -euo pipefail
+        MANIFEST_JSON="$(docker manifest inspect "${DOCKER_IMAGE}")"
+        PLATFORMS="$(printf '%s' "${MANIFEST_JSON}" | \
+          jq -r 'if .manifests then .manifests[] | "\(.platform.os)/\(.platform.architecture)\(if .platform.variant != null then "/\(.platform.variant)" else "" end)" else empty end' | \
+          sort -u | grep -v unknown | paste -sd ',' || true)"
+        if [ -z "${PLATFORMS}" ]
+        then
+          echo "No manifest-list platforms found for ${DOCKER_IMAGE}; restoring the default image cache."
+        fi
+        CACHE_NAME="ccache-manylinux-${{ matrix.mnl-version }}-image"
+        HASH_INPUT="$(printf '%s\n%s\n%s' "${DOCKER_IMAGE}" "${PLATFORMS}" "${CCACHE_IMAGE_CACHE_VERSION}")"
+        IMAGE_HASH="$(printf '%s' "${HASH_INPUT}" | sha256sum | cut -c1-16)"
+        CACHE_DIR="${RUNNER_TEMP}/${CACHE_NAME}-cache"
+        IMAGE_TAR="${CACHE_DIR}/${CACHE_NAME}.tar"
+        IMAGE_CACHE_KEY="ccache-image-${RUNNER_OS}-${IMAGE_HASH}"
+        echo "image-cache-key=${IMAGE_CACHE_KEY}" >> "${GITHUB_OUTPUT}"
+        echo "image-cache-path=${CACHE_DIR}" >> "${GITHUB_OUTPUT}"
+        echo "image-cache-tar=${IMAGE_TAR}" >> "${GITHUB_OUTPUT}"
+
+    - name: Restore CCache image cache
+      uses: actions/cache/restore@v5
+      with:
+        path: ${{ steps.ccache-cache.outputs.image-cache-path }}
+        key: ${{ steps.ccache-cache.outputs.image-cache-key }}
+        fail-on-cache-miss: true
+
     - name: Wait for local image registry
       run: |
         set -euo pipefail
@@ -334,6 +406,18 @@ jobs:
         skopeo copy --all \
           --dest-tls-verify=false \
           "oci-archive:${{ steps.manylinux-cache.outputs.image-cache-tar }}:${MANYLINUX_IMAGE_ARCHIVE_REF}" \
+          "docker://${LOCAL_IMAGE}"
+        echo "image=${LOCAL_IMAGE}" >> "${GITHUB_OUTPUT}"
+
+    - name: Load CCache image into local registry
+      id: local-ccache
+      env:
+        LOCAL_IMAGE: localhost:5000/sobomax/ccache:latest-${{ env.CCACHE_IMG_TAG }}
+      run: |
+        set -euo pipefail
+        skopeo copy --all \
+          --dest-tls-verify=false \
+          "oci-archive:${{ steps.ccache-cache.outputs.image-cache-tar }}:${CCACHE_IMAGE_ARCHIVE_REF}" \
           "docker://${LOCAL_IMAGE}"
         echo "image=${LOCAL_IMAGE}" >> "${GITHUB_OUTPUT}"
 
@@ -370,7 +454,7 @@ jobs:
           PY_VER=${{ env.PY_VER }}
           PYTHON_CMD=${{ env.PYTHON_CMD }}
           CACHE_IMAGE=${{ env.CACHE_IMAGE }}
-          CCACHE_IMAGE=ghcr.io/sobomax/ccache:latest-${{ env.CCACHE_IMG_TAG }}
+          CCACHE_IMAGE=${{ steps.local-ccache.outputs.image }}
         platforms: ${{ env.PLATFORMS }}
         tags: ${{ env.BUILD_IMAGE }}
         push: ${{ env.DO_PUSH }}
