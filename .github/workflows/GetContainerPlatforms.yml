@@ -17,6 +17,7 @@ on:
 
 jobs:
   dm-inspect:
+    name: List Platforms
     runs-on: ubuntu-latest
     outputs:
       platforms: ${{ steps.get-platforms.outputs.platforms }}
