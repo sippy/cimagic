@@ -111,6 +111,15 @@ jobs:
       cache-key-prefix: buildkit-image
       cache-name: buildkit-image
 
+  cache_registry_image:
+    name: Cache Local Registry Image
+    uses: ./.github/workflows/GetCachedContainer.yml
+    with:
+      image: registry:2
+      platforms: host
+      cache-key-prefix: registry-image
+      cache-name: registry-image
+
   cache_manylinux_image:
     name: Cache ManyLinux Image
     strategy:
@@ -166,19 +175,15 @@ jobs:
   bin:
     name: ManyLinux
     runs-on: ubuntu-latest
-    if: ${{ always() && !cancelled() && needs.cache_qemu_image.result != 'failure' && needs.cache_qemu_image.result != 'cancelled' && needs.cache_buildkit_image.result != 'failure' && needs.cache_buildkit_image.result != 'cancelled' && needs.cache_manylinux_image.result != 'failure' && needs.cache_manylinux_image.result != 'cancelled' && needs.cache_ccache_image.result != 'failure' && needs.cache_ccache_image.result != 'cancelled' }}
+    if: ${{ always() && !cancelled() && needs.cache_qemu_image.result != 'failure' && needs.cache_qemu_image.result != 'cancelled' && needs.cache_buildkit_image.result != 'failure' && needs.cache_buildkit_image.result != 'cancelled' && needs.cache_registry_image.result != 'failure' && needs.cache_registry_image.result != 'cancelled' && needs.cache_manylinux_image.result != 'failure' && needs.cache_manylinux_image.result != 'cancelled' && needs.cache_ccache_image.result != 'failure' && needs.cache_ccache_image.result != 'cancelled' }}
     needs:
     - cache_qemu_image
     - cache_buildkit_image
+    - cache_registry_image
     - cache_manylinux_image
     - cache_ccache_image
     permissions:
       packages: write
-    services:
-      registry:
-        image: registry:2
-        ports:
-        - 5000:5000
     env:
       PY_VER: ${{ matrix.python-version }}
       BASE_IMAGE: quay.io/pypa/manylinux_${{ matrix.mnl-version }}:latest
@@ -312,6 +317,16 @@ jobs:
     - name: Load BuildKit image
       run: docker load --input "${{ inputs.buildkit_image_cache_key != '' && inputs.buildkit_image_cache_path != '' && inputs.buildkit_image_cache_tar != '' && inputs.buildkit_image_cache_tar || needs.cache_buildkit_image.outputs.image-cache-tar }}"
 
+    - name: Restore local registry image cache
+      uses: actions/cache/restore@v5
+      with:
+        path: ${{ needs.cache_registry_image.outputs.image-cache-path }}
+        key: ${{ needs.cache_registry_image.outputs.image-cache-key }}
+        fail-on-cache-miss: true
+
+    - name: Load local registry image
+      run: docker load --input "${{ needs.cache_registry_image.outputs.image-cache-tar }}"
+
     - name: Compute ManyLinux image cache metadata
       id: manylinux-cache
       env:
@@ -366,9 +381,10 @@ jobs:
         key: ${{ steps.ccache-cache.outputs.image-cache-key }}
         fail-on-cache-miss: true
 
-    - name: Wait for local image registry
+    - name: Start local image registry
       run: |
         set -euo pipefail
+        docker run -d --name local-registry -p 5000:5000 registry:2
         for attempt in $(seq 1 30)
         do
           if curl -fsS http://localhost:5000/v2/ >/dev/null
@@ -378,6 +394,7 @@ jobs:
           sleep 1
         done
         echo "Local image registry did not become ready." >&2
+        docker logs local-registry >&2 || true
         exit 1
 
     - name: Install Skopeo
