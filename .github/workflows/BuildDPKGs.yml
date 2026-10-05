@@ -44,6 +44,12 @@ jobs:
     steps:
     - name: Install build tools
       run: |
+        # Debian 11 is past its LTS, its packages are moving to archive.debian.org
+        if grep -qs '^VERSION_CODENAME=bullseye' /etc/os-release; then
+          sed -i -e 's|//deb.debian.org/|//archive.debian.org/|' \
+            /etc/apt/sources.list $(ls /etc/apt/sources.list.d/* 2>/dev/null)
+          echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99archive
+        fi
         apt-get update
         apt-get install -y bash git build-essential devscripts debhelper fakeroot zip
         if [ ! -z "${{ inputs.apt_depends }}" ]; then
